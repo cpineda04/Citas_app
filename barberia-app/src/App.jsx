@@ -62,6 +62,20 @@ const PLATFORM_BUSINESSES_SEED = [
 const toWaNumber = (phone) => "1" + phone.replace(/\D/g, "");
 const parsePrice = (label) => parseInt(String(label).replace(/[^\d]/g, ""), 10) || 0;
 const formatPrice = (num) => `RD$${Math.round(num).toLocaleString("en-US")}`;
+
+function downloadCSV(filename, headers, rows) {
+  const escape = (val) => `"${String(val ?? "").replace(/"/g, '""')}"`;
+  const csvContent = [headers.map(escape).join(","), ...rows.map((r) => r.map(escape).join(","))].join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 const initialsFromName = (name) => {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "??";
@@ -215,6 +229,24 @@ function Toast({ message, actionLabel, onAction, onClose }) {
   );
 }
 
+function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger = true, onConfirm, onClose }) {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ background: "rgba(15,23,42,0.35)" }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+        <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${danger ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-800"}`}>
+          <X size={22} />
+        </div>
+        <h3 className="font-serif text-lg font-semibold mb-1.5">{title}</h3>
+        <p className="text-sm text-slate-500 mb-5">{message}</p>
+        <button onClick={onConfirm} className={`w-full text-white font-semibold py-3 rounded-xl mb-2.5 text-sm ${danger ? "bg-red-600" : "bg-emerald-700"}`}>
+          {confirmLabel}
+        </button>
+        <button onClick={onClose} className="w-full border border-stone-200 py-2.5 rounded-xl font-semibold text-sm">Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
 function WhatsAppButton({ href, children }) {
   return (
     <a
@@ -237,12 +269,61 @@ function SummaryRow({ k, v, total }) {
   );
 }
 
-function ProgressDots({ filled }) {
+function StepTransition({ children, transitionKey }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [transitionKey]);
   return (
-    <div className="flex justify-center gap-1.5 pt-3 pb-1">
-      {[0, 1, 2, 3].map((i) => (
-        <span key={i} className={`w-5 h-1 rounded-full ${i < filled ? "bg-emerald-700" : "bg-stone-200"}`} />
-      ))}
+    <div
+      style={{
+        transform: visible ? "translateX(0)" : "translateX(18px)",
+        opacity: visible ? 1 : 0,
+        transition: "transform 240ms ease, opacity 240ms ease",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function LoadingStep({ label }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 px-5 text-center" style={{ height: "600px" }}>
+      <div className="w-10 h-10 border-4 border-emerald-100 border-t-emerald-700 rounded-full animate-spin" />
+      <p className="text-sm text-slate-500">{label}</p>
+    </div>
+  );
+}
+
+const FLOW_STEP_LABELS = ["Servicio", "Fecha", "Hora", "Datos"];
+
+function ProgressBar({ current }) {
+  return (
+    <div className="flex items-start px-5 pt-3 pb-2 gap-1.5">
+      {FLOW_STEP_LABELS.map((label, i) => {
+        const n = i + 1;
+        const active = n === current;
+        const done = n < current;
+        return (
+          <div key={label} className="flex-1 flex flex-col items-center gap-1">
+            <div className={`h-1 w-full rounded-full ${done || active ? "bg-emerald-700" : "bg-stone-200"}`} />
+            <span className={`text-xs ${active ? "text-emerald-800 font-semibold" : "text-stone-400"}`}>{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MiniSummaryBar({ service, employee }) {
+  if (!service) return null;
+  return (
+    <div className="mx-5 mb-1 flex items-center justify-between bg-stone-100 rounded-lg px-3 py-2 text-xs gap-2">
+      <span className="font-semibold text-slate-700 truncate">{service.name}</span>
+      <span className="text-slate-500 flex-shrink-0">{employee ? employee.name.split(" ")[0] : "Cualquiera"} · {service.priceLabel}</span>
     </div>
   );
 }
@@ -307,7 +388,23 @@ function TopSwitcher({ view, setView }) {
    FLUJO DEL CLIENTE (dentro de un marco de teléfono)
    ============================================================ */
 
-function StepLanding({ profile, closingLabel, onNext }) {
+const TESTIMONIALS = [
+  { name: "Julio R.", text: "Siempre salgo bien atendido, puntualidad total.", rating: 5 },
+  { name: "Marisol T.", text: "El mejor corte + barba de la zona, sin duda.", rating: 5 },
+  { name: "Kelvin D.", text: "Reservar por aquí es rapidísimo, se los recomiendo.", rating: 5 },
+];
+
+function StepLanding({ profile, closingLabel, employees, onNext }) {
+  const [reviewIndex, setReviewIndex] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setReviewIndex((i) => (i + 1) % TESTIMONIALS.length), 4000);
+    return () => clearInterval(t);
+  }, []);
+  const review = TESTIMONIALS[reviewIndex];
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Buenos días" : hour < 19 ? "Buenas tardes" : "Buenas noches";
+  const activeEmployees = employees.filter((e) => e.active).slice(0, 4);
+
   return (
     <div>
       <div className="h-36 bg-gradient-to-br from-emerald-700 to-slate-900" />
@@ -317,16 +414,36 @@ function StepLanding({ profile, closingLabel, onNext }) {
         </div>
       </div>
       <div className="px-5 pt-3 pb-2">
+        <p className="text-xs font-semibold text-emerald-700 mb-1">{greeting} 👋</p>
         <h1 className="font-serif text-xl font-semibold mb-1">{profile.name}</h1>
         <p className="text-sm text-slate-500 mb-3 leading-relaxed">
           Av. Winston Churchill 45, Santo Domingo · {profile.description}
         </p>
-        <div className="flex gap-2 flex-wrap mb-5">
+
+        {activeEmployees.length > 0 && (
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex -space-x-2">
+              {activeEmployees.map((e) => (
+                <div key={e.id} className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 border-2 border-white flex items-center justify-center text-xs font-bold">
+                  {e.initials}
+                </div>
+              ))}
+            </div>
+            <span className="text-xs text-slate-500">Equipo de {activeEmployees.length} profesionales</span>
+          </div>
+        )}
+
+        <div className="flex gap-2 flex-wrap mb-3">
           <span className="text-xs px-2.5 py-1 rounded-full bg-white border border-stone-200 text-slate-500">★ 4.9 (312)</span>
           <span className="text-xs px-2.5 py-1 rounded-full bg-white border border-stone-200 text-slate-500">{closingLabel}</span>
           <span className="text-xs px-2.5 py-1 rounded-full bg-white border border-stone-200 text-slate-500">WhatsApp</span>
         </div>
-        <button onClick={onNext} className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold py-3.5 rounded-xl transition">
+
+        <div key={reviewIndex} className="bg-white border border-stone-200 rounded-lg px-3.5 py-2.5 mb-5 text-xs text-slate-600 italic animate-fade">
+          "{review.text}" — {review.name} · {"★".repeat(review.rating)}
+        </div>
+
+        <button onClick={onNext} className="w-full bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">
           Reservar una cita
         </button>
       </div>
@@ -334,11 +451,14 @@ function StepLanding({ profile, closingLabel, onNext }) {
   );
 }
 
-function StepService({ services, service, setService, employees, employee, setEmployee, profile, onBack, onNext }) {
+function StepService({ services, service, setService, employees, employee, setEmployee, profile, appts, onBack, onNext }) {
   const eligible = employees.filter((e) => e.active && e.serviceIds.includes(service.id));
+  const serviceCounts = {};
+  appts.forEach((a) => { serviceCounts[a.service] = (serviceCounts[a.service] || 0) + 1; });
+  const topServiceName = Object.entries(serviceCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
   return (
     <div className="flex flex-col h-full">
-      <ProgressDots filled={1} />
+      <ProgressBar current={1} />
       <div className="px-5 flex-1">
         <h3 className="font-serif text-lg font-semibold mt-1 mb-0.5">Elige un servicio</h3>
         <p className="text-sm text-slate-500 mb-4">{profile.name}</p>
@@ -346,12 +466,17 @@ function StepService({ services, service, setService, employees, employee, setEm
           <div
             key={s.id}
             onClick={() => { setService(s); setEmployee(null); }}
-            className={`flex justify-between items-center border rounded-xl px-4 py-3.5 mb-2.5 cursor-pointer transition ${
+            className={`flex justify-between items-center border rounded-xl px-4 py-3.5 mb-2.5 cursor-pointer transition-transform duration-150 active:scale-95 ${
               service.id === s.id ? "border-emerald-700 bg-emerald-50" : "border-stone-200 bg-white hover:border-emerald-700"
             }`}
           >
             <div>
-              <p className="font-semibold text-sm mb-0.5">{s.name}</p>
+              <p className="font-semibold text-sm mb-0.5 flex items-center gap-1.5">
+                {s.name}
+                {s.name === topServiceName && (
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full">🔥 Popular hoy</span>
+                )}
+              </p>
               <p className="text-xs text-slate-500">{s.duration}</p>
             </div>
             <div className="font-serif font-semibold text-emerald-800">{s.priceLabel}</div>
@@ -387,7 +512,7 @@ function StepService({ services, service, setService, employees, employee, setEm
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onNext} className="w-full bg-emerald-700 text-white font-semibold py-3.5 rounded-xl">Continuar</button>
+        <button onClick={onNext} className="w-full bg-emerald-700 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">Continuar</button>
       </BottomBar>
     </div>
   );
@@ -401,7 +526,7 @@ function StepDate({ service, day, setDay, schedule, profile, onBack, onNext }) {
   };
   return (
     <div className="flex flex-col h-full">
-      <ProgressDots filled={2} />
+      <ProgressBar current={2} />
       <div className="px-5 flex-1">
         <h3 className="font-serif text-lg font-semibold mt-1 mb-0.5">Elige una fecha</h3>
         <p className="text-sm text-slate-500 mb-4">{service.name} · {service.duration}</p>
@@ -422,7 +547,7 @@ function StepDate({ service, day, setDay, schedule, profile, onBack, onNext }) {
               <div
                 key={d}
                 onClick={() => setDay(d)}
-                className={`aspect-square flex items-center justify-center text-sm rounded-lg cursor-pointer border ${
+                className={`aspect-square flex items-center justify-center text-sm rounded-lg cursor-pointer border transition-transform duration-150 active:scale-90 ${
                   selected ? "bg-emerald-700 text-white border-emerald-700" : "bg-white border-stone-200 hover:border-emerald-700"
                 }`}
               >
@@ -435,7 +560,7 @@ function StepDate({ service, day, setDay, schedule, profile, onBack, onNext }) {
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onNext} className="w-full bg-emerald-700 text-white font-semibold py-3.5 rounded-xl">Continuar</button>
+        <button onClick={onNext} className="w-full bg-emerald-700 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">Continuar</button>
       </BottomBar>
     </div>
   );
@@ -444,28 +569,53 @@ function StepDate({ service, day, setDay, schedule, profile, onBack, onNext }) {
 function StepTime({ day, slot, setSlot, takenSlots, schedule, onBack, onNext }) {
   const entry = schedule.find((s) => s.day === dayNameFor(day));
   const blocks = entry && entry.open ? entry.blocks : [];
+  const [liveTaken, setLiveTaken] = useState([]);
+  const [liveNotice, setLiveNotice] = useState(null);
+
+  const allTaken = [...takenSlots, ...liveTaken];
+  const availableSlots = TIME_SLOTS.filter((t) => isSlotWithinBlocks(t, blocks) && !allTaken.includes(t));
+  const availableKey = availableSlots.join(",");
+
+  useEffect(() => {
+    const remaining = availableSlots.filter((t) => t !== slot);
+    if (remaining.length === 0) return;
+    const timer = setTimeout(() => {
+      const pick = remaining[Math.floor(Math.random() * remaining.length)];
+      setLiveTaken((prev) => [...prev, pick]);
+      setLiveNotice(`Alguien más acaba de reservar las ${pick}`);
+      setTimeout(() => setLiveNotice(null), 3500);
+    }, 6000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableKey]);
+
   return (
     <div className="flex flex-col h-full">
-      <ProgressDots filled={3} />
+      <ProgressBar current={3} />
       <div className="px-5 flex-1">
         <h3 className="font-serif text-lg font-semibold mt-1 mb-0.5">Elige una hora</h3>
-        <p className="text-sm text-slate-500 mb-4">{dayNameFor(day)} {day} de septiembre</p>
+        <p className="text-sm text-slate-500 mb-3">{dayNameFor(day)} {day} de septiembre</p>
+        {liveNotice && (
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 animate-fade">
+            {liveNotice}
+          </div>
+        )}
         <div className="grid grid-cols-3 gap-2">
           {TIME_SLOTS.map((t) => {
             const withinHours = isSlotWithinBlocks(t, blocks);
-            const taken = takenSlots.includes(t);
+            const taken = allTaken.includes(t);
             const disabled = taken || !withinHours;
             const selected = slot === t;
             return (
               <div
                 key={t}
                 onClick={() => !disabled && setSlot(t)}
-                className={`text-center py-2.5 rounded-lg text-sm font-medium border ${
+                className={`text-center py-2.5 rounded-lg text-sm font-medium border transition-transform duration-150 ${
                   disabled
                     ? "text-stone-300 line-through cursor-not-allowed border-stone-200"
                     : selected
-                    ? "bg-emerald-700 text-white border-emerald-700 cursor-pointer"
-                    : "bg-white border-stone-200 hover:border-emerald-700 cursor-pointer"
+                    ? "bg-emerald-700 text-white border-emerald-700 cursor-pointer active:scale-90"
+                    : "bg-white border-stone-200 hover:border-emerald-700 cursor-pointer active:scale-90"
                 }`}
               >
                 {t}
@@ -473,32 +623,46 @@ function StepTime({ day, slot, setSlot, takenSlots, schedule, onBack, onNext }) 
             );
           })}
         </div>
-        <p className="text-xs text-slate-500 mt-4">Se excluyen los horarios fuera de servicio y los que ya tienen una cita.</p>
+        <p className="text-xs text-slate-500 mt-4">
+          Quedan {availableSlots.length} horario{availableSlots.length === 1 ? "" : "s"} disponible{availableSlots.length === 1 ? "" : "s"} hoy.
+        </p>
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onNext} className="w-full bg-emerald-700 text-white font-semibold py-3.5 rounded-xl">Continuar</button>
+        <button onClick={onNext} className="w-full bg-emerald-700 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">Continuar</button>
       </BottomBar>
     </div>
   );
 }
 
-function StepContact({ contact, setContact, onBack, onNext }) {
+function StepContact({ contact, setContact, clients, onBack, onNext }) {
   const update = (field) => (e) => setContact((prev) => ({ ...prev, [field]: e.target.value }));
+  const matched = clients.find((c) => c.phone === contact.phone.trim());
   return (
     <div className="flex flex-col h-full">
-      <ProgressDots filled={4} />
+      <ProgressBar current={4} />
       <div className="px-5 flex-1">
         <h3 className="font-serif text-lg font-semibold mt-1 mb-0.5">Tus datos</h3>
         <p className="text-sm text-slate-500 mb-4">Para confirmar tu cita y enviarte el recordatorio</p>
         <Field label="Teléfono" value={contact.phone} onChange={update("phone")} />
+        {matched && (
+          <div key={matched.id} className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3.5 py-2.5 mb-3.5 text-xs text-emerald-800 animate-fade">
+            <span>¡Bienvenido de nuevo, {matched.name.split(" ")[0]}! Te reconocimos por tu teléfono.</span>
+            <button
+              onClick={() => setContact((prev) => ({ ...prev, name: matched.name, email: matched.email }))}
+              className="font-semibold underline flex-shrink-0"
+            >
+              Usar mis datos
+            </button>
+          </div>
+        )}
         <Field label="Nombre completo" value={contact.name} onChange={update("name")} />
         <Field label="Correo electrónico" value={contact.email} onChange={update("email")} />
         <p className="text-xs text-slate-500">Tip: escribe tu propio nombre — así la verás aparecer en el panel del negocio.</p>
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onNext} className="w-full bg-emerald-700 text-white font-semibold py-3.5 rounded-xl">Revisar y confirmar</button>
+        <button onClick={onNext} className="w-full bg-emerald-700 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">Revisar y confirmar</button>
       </BottomBar>
     </div>
   );
@@ -526,7 +690,7 @@ function StepSummary({ service, day, slot, contact, employee, profile, onBack, o
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onNext} className="w-full bg-emerald-700 text-white font-semibold py-3.5 rounded-xl">Confirmar cita</button>
+        <button onClick={onNext} className="w-full bg-emerald-700 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">Confirmar cita</button>
       </BottomBar>
     </div>
   );
@@ -536,7 +700,7 @@ function StepConfirmed({ service, day, slot, contact, profile, onHome, onMisCita
   const msg = `Hola ${profile.name}, quisiera reservar una cita:\nServicio: ${service.name}\nFecha: ${day} de septiembre, ${slot}\nNombre: ${contact.name}`;
   return (
     <div className="px-5 pt-8 text-center">
-      <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto mb-4">
+      <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto mb-4 animate-pop">
         <Clock size={30} />
       </div>
       <h2 className="font-serif text-xl font-semibold mb-1.5">Tu solicitud fue enviada</h2>
@@ -554,7 +718,7 @@ function StepConfirmed({ service, day, slot, contact, profile, onHome, onMisCita
       <div className="flex items-center gap-2.5 text-xs text-slate-400 my-3">
         <div className="flex-1 h-px bg-stone-200" /> o <div className="flex-1 h-px bg-stone-200" />
       </div>
-      <button onClick={onHome} className="w-full border border-stone-200 py-3 rounded-xl font-semibold text-sm mb-3">Volver al inicio</button>
+      <button onClick={onHome} className="w-full border border-stone-200 active:scale-95 py-3 rounded-xl font-semibold text-sm mb-3 transition-transform duration-150">Volver al inicio</button>
       <div onClick={onMisCitas} className="text-sm font-semibold text-slate-500 cursor-pointer mb-4">Ver mis citas →</div>
       <p className="text-xs text-slate-400 bg-stone-100 rounded-lg p-3 text-left">
         Cambia a "Panel del negocio" → Citas para ver tu solicitud recién creada, pendiente de confirmación.
@@ -581,10 +745,10 @@ function StepMisCitas({ profile, onBack, onReprogramar, onCancelar }) {
           {(profile.allowRescheduling || profile.allowCancellation) ? (
             <div className="flex gap-2 mt-3">
               {profile.allowRescheduling && (
-                <button onClick={onReprogramar} className="flex-1 border border-stone-200 rounded-lg py-2 text-xs font-semibold">Reprogramar</button>
+                <button onClick={onReprogramar} className="flex-1 border border-stone-200 active:scale-95 rounded-lg py-2 text-xs font-semibold transition-transform duration-150">Reprogramar</button>
               )}
               {profile.allowCancellation && (
-                <button onClick={onCancelar} className="flex-1 border border-red-200 text-red-600 rounded-lg py-2 text-xs font-semibold">Cancelar</button>
+                <button onClick={onCancelar} className="flex-1 border border-red-200 text-red-600 active:scale-95 rounded-lg py-2 text-xs font-semibold transition-transform duration-150">Cancelar</button>
               )}
             </div>
           ) : (
@@ -650,7 +814,7 @@ function StepReprogramar({ day, setDay, slot, setSlot, onBack, onNext }) {
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onNext} className="w-full bg-emerald-700 text-white font-semibold py-3.5 rounded-xl">Confirmar nuevo horario</button>
+        <button onClick={onNext} className="w-full bg-emerald-700 active:scale-95 text-white font-semibold py-3.5 rounded-xl transition-transform duration-150">Confirmar nuevo horario</button>
       </BottomBar>
     </div>
   );
@@ -675,8 +839,8 @@ function StepCancelar({ reason, setReason, profile, onBack, onConfirm }) {
       </div>
       <BackLink onBack={onBack} />
       <BottomBar>
-        <button onClick={onConfirm} className="w-full bg-red-600 text-white font-semibold py-3.5 rounded-xl mb-2.5">Sí, cancelar cita</button>
-        <button onClick={onBack} className="w-full border border-stone-200 py-3 rounded-xl font-semibold text-sm">No, mantener cita</button>
+        <button onClick={onConfirm} className="w-full bg-red-600 active:scale-95 text-white font-semibold py-3.5 rounded-xl mb-2.5 transition-transform duration-150">Sí, cancelar cita</button>
+        <button onClick={onBack} className="w-full border border-stone-200 active:scale-95 py-3 rounded-xl font-semibold text-sm transition-transform duration-150">No, mantener cita</button>
       </BottomBar>
     </div>
   );
@@ -686,7 +850,7 @@ function StepReprogramada({ rescheduleDay, rescheduleSlot, profile, onMisCitas }
   const msg = `Hola ${profile.name}, reprogramé mi cita:\nServicio: Corte + Barba\nAntes: Jueves 18 de septiembre, 3:00 PM\nAhora: ${rescheduleDay} de septiembre, ${rescheduleSlot}\nNombre: Juan Pérez`;
   return (
     <div className="px-5 pt-8 text-center">
-      <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center mx-auto mb-4">
+      <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center mx-auto mb-4 animate-pop">
         <Check size={30} />
       </div>
       <h2 className="font-serif text-xl font-semibold mb-1.5">Cita reprogramada</h2>
@@ -696,7 +860,7 @@ function StepReprogramada({ rescheduleDay, rescheduleSlot, profile, onMisCitas }
         <SummaryRow k="Ahora" v={`${rescheduleDay} sep · ${rescheduleSlot}`} />
       </div>
       <WhatsAppButton href={waLink(msg, profile.whatsapp)}>Avisar al negocio por WhatsApp</WhatsAppButton>
-      <button onClick={onMisCitas} className="w-full border border-stone-200 py-3 rounded-xl font-semibold text-sm mt-1">Ver mis citas</button>
+      <button onClick={onMisCitas} className="w-full border border-stone-200 active:scale-95 py-3 rounded-xl font-semibold text-sm mt-1 transition-transform duration-150">Ver mis citas</button>
     </div>
   );
 }
@@ -705,7 +869,7 @@ function StepCancelada({ reason, profile, onHome }) {
   const msg = `Hola ${profile.name}, cancelo mi cita:\nServicio: Corte + Barba\nFecha: Jueves 18 de septiembre, 3:00 PM\nNombre: Juan Pérez${reason ? "\nMotivo: " + reason : ""}`;
   return (
     <div className="px-5 pt-8 text-center">
-      <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-4">
+      <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-4 animate-pop">
         <X size={30} />
       </div>
       <h2 className="font-serif text-xl font-semibold mb-1.5">Cita cancelada</h2>
@@ -715,12 +879,12 @@ function StepCancelada({ reason, profile, onHome }) {
         <SummaryRow k="Fecha" v="Jue 18 sep · 3:00 PM" />
       </div>
       <WhatsAppButton href={waLink(msg, profile.whatsapp)}>Avisar al negocio por WhatsApp</WhatsAppButton>
-      <button onClick={onHome} className="w-full border border-stone-200 py-3 rounded-xl font-semibold text-sm mt-1">Volver al inicio</button>
+      <button onClick={onHome} className="w-full border border-stone-200 active:scale-95 py-3 rounded-xl font-semibold text-sm mt-1 transition-transform duration-150">Volver al inicio</button>
     </div>
   );
 }
 
-function ClientFlow({ services, appts, setAppts, setClients, schedule, profile, employees }) {
+function ClientFlow({ services, appts, setAppts, clients, setClients, schedule, profile, employees }) {
   const [step, setStep] = useState(0);
   const [service, setService] = useState(services[0]);
   const [employee, setEmployee] = useState(null);
@@ -730,6 +894,19 @@ function ClientFlow({ services, appts, setAppts, setClients, schedule, profile, 
   const [reason, setReason] = useState("");
   const [rDay, setRDay] = useState(19);
   const [rSlot, setRSlot] = useState("1:00 PM");
+  const [loadingLabel, setLoadingLabel] = useState(null);
+
+  const goToStep = (next, label) => {
+    if (label) {
+      setLoadingLabel(label);
+      setTimeout(() => {
+        setStep(next);
+        setLoadingLabel(null);
+      }, 450);
+    } else {
+      setStep(next);
+    }
+  };
 
   const takenSlots = appts.filter((a) => a.status !== "cancelled").map((a) => a.time);
 
@@ -782,18 +959,27 @@ function ClientFlow({ services, appts, setAppts, setClients, schedule, profile, 
         <div className="bg-stone-50 overflow-hidden flex flex-col relative" style={{ borderRadius: "2rem", height: "740px" }}>
           <div className="absolute top-3.5 left-1/2 -translate-x-1/2 w-24 h-5 bg-slate-900 rounded-full z-10" />
           <div className="flex-1 overflow-y-auto pt-8">
-            {step === 0 && <StepLanding profile={profile} closingLabel={closingLabel} onNext={() => setStep(1)} />}
-            {step === 1 && <StepService services={services} service={service} setService={setService} employees={employees} employee={employee} setEmployee={setEmployee} profile={profile} onBack={() => setStep(0)} onNext={() => setStep(2)} />}
-            {step === 2 && <StepDate service={service} day={day} setDay={setDay} schedule={schedule} profile={profile} onBack={() => setStep(1)} onNext={() => setStep(3)} />}
-            {step === 3 && <StepTime day={day} slot={slot} setSlot={setSlot} takenSlots={takenSlots} schedule={schedule} onBack={() => setStep(2)} onNext={() => setStep(4)} />}
-            {step === 4 && <StepContact contact={contact} setContact={setContact} onBack={() => setStep(3)} onNext={() => setStep(5)} />}
-            {step === 5 && <StepSummary service={service} day={day} slot={slot} contact={contact} employee={employee} profile={profile} onBack={() => setStep(4)} onNext={handleBook} />}
-            {step === 6 && <StepConfirmed service={service} day={day} slot={slot} contact={contact} profile={profile} onHome={() => setStep(0)} onMisCitas={() => setStep(7)} />}
-            {step === 7 && <StepMisCitas profile={profile} onBack={() => setStep(6)} onReprogramar={() => setStep(8)} onCancelar={() => setStep(9)} />}
-            {step === 8 && <StepReprogramar day={rDay} setDay={setRDay} slot={rSlot} setSlot={setRSlot} onBack={() => setStep(7)} onNext={() => setStep(10)} />}
-            {step === 9 && <StepCancelar reason={reason} setReason={setReason} profile={profile} onBack={() => setStep(7)} onConfirm={() => setStep(11)} />}
-            {step === 10 && <StepReprogramada rescheduleDay={rDay} rescheduleSlot={rSlot} profile={profile} onMisCitas={() => setStep(7)} />}
-            {step === 11 && <StepCancelada reason={reason} profile={profile} onHome={() => setStep(0)} />}
+            {loadingLabel ? (
+              <LoadingStep label={loadingLabel} />
+            ) : (
+              <>
+                {[2, 3, 4].includes(step) && <MiniSummaryBar service={service} employee={employee} />}
+                <StepTransition transitionKey={step}>
+                  {step === 0 && <StepLanding profile={profile} closingLabel={closingLabel} employees={employees} onNext={() => setStep(1)} />}
+                  {step === 1 && <StepService services={services} service={service} setService={setService} employees={employees} employee={employee} setEmployee={setEmployee} profile={profile} appts={appts} onBack={() => setStep(0)} onNext={() => goToStep(2, "Buscando disponibilidad...")} />}
+                  {step === 2 && <StepDate service={service} day={day} setDay={setDay} schedule={schedule} profile={profile} onBack={() => setStep(1)} onNext={() => goToStep(3, "Verificando horarios...")} />}
+                  {step === 3 && <StepTime day={day} slot={slot} setSlot={setSlot} takenSlots={takenSlots} schedule={schedule} onBack={() => setStep(2)} onNext={() => setStep(4)} />}
+                  {step === 4 && <StepContact contact={contact} setContact={setContact} clients={clients} onBack={() => setStep(3)} onNext={() => setStep(5)} />}
+                  {step === 5 && <StepSummary service={service} day={day} slot={slot} contact={contact} employee={employee} profile={profile} onBack={() => setStep(4)} onNext={handleBook} />}
+                  {step === 6 && <StepConfirmed service={service} day={day} slot={slot} contact={contact} profile={profile} onHome={() => setStep(0)} onMisCitas={() => setStep(7)} />}
+                  {step === 7 && <StepMisCitas profile={profile} onBack={() => setStep(6)} onReprogramar={() => setStep(8)} onCancelar={() => setStep(9)} />}
+                  {step === 8 && <StepReprogramar day={rDay} setDay={setRDay} slot={rSlot} setSlot={setRSlot} onBack={() => setStep(7)} onNext={() => setStep(10)} />}
+                  {step === 9 && <StepCancelar reason={reason} setReason={setReason} profile={profile} onBack={() => setStep(7)} onConfirm={() => setStep(11)} />}
+                  {step === 10 && <StepReprogramada rescheduleDay={rDay} rescheduleSlot={rSlot} profile={profile} onMisCitas={() => setStep(7)} />}
+                  {step === 11 && <StepCancelada reason={reason} profile={profile} onHome={() => setStep(0)} />}
+                </StepTransition>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -946,6 +1132,111 @@ function MonthView({ schedule, citasHoy, onGoToday }) {
   );
 }
 
+const HOUR_HEIGHT = 56;
+const AGENDA_COL_WIDTH = 168;
+const AGENDA_TIME_COL_WIDTH = 60;
+
+const minutesToLabel = (mins) => {
+  let h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const ap = h >= 12 ? "PM" : "AM";
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:${m.toString().padStart(2, "0")} ${ap}`;
+};
+
+const durationToMinutes = (label) => parseInt(String(label).replace(/[^\d]/g, ""), 10) || 30;
+
+const AGENDA_STATUS_STYLES = {
+  pending: "bg-amber-50 border-amber-400 text-amber-900",
+  confirmed: "bg-emerald-50 border-emerald-400 text-emerald-900",
+  done: "bg-stone-100 border-stone-300 text-stone-500",
+};
+
+function AgendaView({ appts, employees, schedule, onGoToDia }) {
+  const todayEntry = schedule.find((s) => s.day === "Jueves");
+  const blocks = todayEntry && todayEntry.open ? todayEntry.blocks : [];
+
+  let dayStartMin = 9 * 60;
+  let dayEndMin = 17 * 60;
+  if (blocks.length > 0) {
+    const starts = blocks.map((b) => parseTimeToMinutes(b.split("–")[0].trim())).filter((n) => n !== null);
+    const ends = blocks.map((b) => parseTimeToMinutes(b.split("–")[1].trim())).filter((n) => n !== null);
+    if (starts.length) dayStartMin = Math.min(...starts);
+    if (ends.length) dayEndMin = Math.max(...ends);
+  }
+  const totalHours = Math.max(1, Math.ceil((dayEndMin - dayStartMin) / 60));
+  const hourMarks = Array.from({ length: totalHours + 1 }, (_, i) => dayStartMin + i * 60);
+
+  const activeEmployees = employees.filter((e) => e.active);
+  const columns = [...activeEmployees.map((e) => ({ id: e.id, name: e.name, role: e.role })), { id: "unassigned", name: "Sin asignar", role: null }];
+
+  const visibleAppts = appts.filter((a) => a.status !== "cancelled");
+  const apptsForColumn = (col) => {
+    if (col.id === "unassigned") return visibleAppts.filter((a) => !activeEmployees.some((e) => e.name === a.employee));
+    return visibleAppts.filter((a) => a.employee === col.name);
+  };
+
+  const totalWidth = AGENDA_TIME_COL_WIDTH + columns.length * AGENDA_COL_WIDTH;
+
+  return (
+    <div>
+      <div className="border border-stone-200 rounded-xl overflow-x-auto mb-3">
+        <div style={{ minWidth: `${totalWidth}px` }}>
+          <div className="flex border-b border-stone-200">
+            <div style={{ width: AGENDA_TIME_COL_WIDTH }} className="flex-shrink-0" />
+            {columns.map((col) => (
+              <div key={col.id} style={{ width: AGENDA_COL_WIDTH }} className="flex-shrink-0 px-2 py-2.5 text-center border-l border-stone-100">
+                <div className="text-sm font-semibold truncate">{col.name}</div>
+                {col.role && <div className="text-xs text-slate-400 truncate">{col.role}</div>}
+              </div>
+            ))}
+          </div>
+          <div className="flex">
+            <div style={{ width: AGENDA_TIME_COL_WIDTH }} className="flex-shrink-0">
+              {hourMarks.map((m) => (
+                <div key={m} style={{ height: HOUR_HEIGHT }} className="text-xs text-slate-400 text-right pr-2 pt-1 border-t border-stone-100">
+                  {minutesToLabel(m)}
+                </div>
+              ))}
+            </div>
+            {columns.map((col) => (
+              <div key={col.id} style={{ width: AGENDA_COL_WIDTH, height: totalHours * HOUR_HEIGHT }} className="flex-shrink-0 border-l border-stone-100 relative">
+                {hourMarks.slice(0, -1).map((m) => (
+                  <div key={m} style={{ height: HOUR_HEIGHT }} className="border-t border-stone-100" />
+                ))}
+                {apptsForColumn(col).map((a) => {
+                  const startMin = parseTimeToMinutes(a.time);
+                  if (startMin === null) return null;
+                  const top = ((startMin - dayStartMin) / 60) * HOUR_HEIGHT;
+                  const height = Math.max(26, (durationToMinutes(a.duration) / 60) * HOUR_HEIGHT - 4);
+                  return (
+                    <div
+                      key={a.id}
+                      onClick={onGoToDia}
+                      style={{ top: `${top + 2}px`, height: `${height}px` }}
+                      className={`absolute left-1 right-1 rounded-lg border px-2 py-1 text-xs cursor-pointer overflow-hidden transition-transform duration-150 active:scale-95 ${AGENDA_STATUS_STYLES[a.status] || "bg-stone-100 border-stone-300"}`}
+                    >
+                      <div className="font-semibold truncate">{a.time} · {a.client}</div>
+                      <div className="truncate opacity-80">{a.service}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-4 flex-wrap text-xs text-slate-500">
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> Pendiente</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Confirmada</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-stone-300" /> Completada</span>
+        <span>· Toca una cita para ir a la vista Día y gestionarla</span>
+      </div>
+    </div>
+  );
+}
+
 function NewApptModal({ clients, services, appts, employees, onClose, onCreate }) {
   const [mode, setMode] = useState("existing");
   const [clientId, setClientId] = useState(clients[0]?.id || "");
@@ -958,19 +1249,24 @@ function NewApptModal({ clients, services, appts, employees, onClose, onCreate }
   const availableTimes = TIME_SLOTS.filter((t) => !takenTimes.includes(t));
   const [time, setTime] = useState(availableTimes[0] || "");
   const eligibleEmployees = employees.filter((e) => e.active && e.serviceIds.includes(serviceId));
+  const [error, setError] = useState("");
 
   const handleSubmit = () => {
     const service = services.find((s) => s.id === serviceId);
-    if (!service || !time) return;
+    if (!service) { setError("Selecciona un servicio."); return; }
+    if (!time) { setError("No hay una hora seleccionada."); return; }
     const chosenEmployee = employees.find((e) => e.id === employeeId);
     let clientName, clientPhone, newClientObj = null;
     if (mode === "existing") {
       const c = clients.find((cl) => cl.id === clientId);
-      if (!c) return;
+      if (!c) { setError("Selecciona un cliente."); return; }
       clientName = c.name;
       clientPhone = c.phone;
     } else {
-      if (!newName.trim() || !newPhone.trim()) return;
+      if (!newName.trim() || !newPhone.trim()) {
+        setError("Completa el nombre y el teléfono del nuevo cliente.");
+        return;
+      }
       clientName = newName.trim();
       clientPhone = newPhone.trim();
       newClientObj = {
@@ -1066,6 +1362,7 @@ function NewApptModal({ clients, services, appts, employees, onClose, onCreate }
           )}
         </div>
 
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
         <button onClick={handleSubmit} disabled={availableTimes.length === 0} className="w-full bg-emerald-700 disabled:bg-stone-300 text-white font-semibold py-3 rounded-xl text-sm">
           Crear cita
         </button>
@@ -1077,6 +1374,8 @@ function NewApptModal({ clients, services, appts, employees, onClose, onCreate }
 function CitasPanel({ appts, clients, services, employees, schedule, profile, updateStatus, setAppts, onGoToClientes, onCreateAppt, onCreateClient }) {
   const [tab, setTab] = useState("Día");
   const [statusFilter, setStatusFilter] = useState("Todos los estados");
+  const [serviceFilter, setServiceFilter] = useState("Todos los servicios");
+  const [search, setSearch] = useState("");
   const [showRevenue, setShowRevenue] = useState(false);
   const [showNewAppt, setShowNewAppt] = useState(false);
   const [toast, setToast] = useState(null);
@@ -1139,7 +1438,11 @@ function CitasPanel({ appts, clients, services, employees, schedule, profile, up
   };
 
   const filterMap = { Pendiente: "pending", Confirmada: "confirmed", Completada: "done", Cancelada: "cancelled" };
-  const visibleAppts = statusFilter === "Todos los estados" ? appts : appts.filter((a) => a.status === filterMap[statusFilter]);
+  const searchQuery = search.trim().toLowerCase();
+  const visibleAppts = appts
+    .filter((a) => statusFilter === "Todos los estados" || a.status === filterMap[statusFilter])
+    .filter((a) => serviceFilter === "Todos los servicios" || a.service === serviceFilter)
+    .filter((a) => !searchQuery || a.client.toLowerCase().includes(searchQuery));
   const selectablePendingIds = visibleAppts.filter((a) => a.status === "pending").map((a) => a.id);
   const allPendingSelected = selectablePendingIds.length > 0 && selectablePendingIds.every((id) => selected.includes(id));
   const toggleSelectAllPending = () => {
@@ -1194,7 +1497,7 @@ function CitasPanel({ appts, clients, services, employees, schedule, profile, up
           <div className="text-sm text-slate-500">{citasHoy} citas hoy · {pendientesCount} pendientes de confirmar</div>
         </div>
         <div className="inline-flex bg-stone-100 border border-stone-200 rounded-lg p-0.5">
-          {["Día", "Semana", "Mes"].map((t) => (
+          {["Día", "Agenda", "Semana", "Mes"].map((t) => (
             <span
               key={t}
               onClick={() => setTab(t)}
@@ -1206,6 +1509,7 @@ function CitasPanel({ appts, clients, services, employees, schedule, profile, up
         </div>
       </div>
 
+      {tab === "Agenda" && <AgendaView appts={appts} employees={employees} schedule={schedule} onGoToDia={() => setTab("Día")} />}
       {tab === "Semana" && <WeekView schedule={schedule} citasHoy={citasHoy} onGoToday={() => setTab("Día")} />}
       {tab === "Mes" && <MonthView schedule={schedule} citasHoy={citasHoy} onGoToday={() => setTab("Día")} />}
 
@@ -1215,8 +1519,8 @@ function CitasPanel({ appts, clients, services, employees, schedule, profile, up
             <div className="flex items-center gap-2 text-sm font-semibold">
               <ChevronLeft size={16} className="cursor-pointer text-slate-400" /> Jueves, 18 sep <ChevronRight size={16} className="cursor-pointer text-slate-400" />
             </div>
-            <input placeholder="Buscar cliente..." className="border border-stone-200 rounded-lg px-3 py-2 text-sm w-48" />
-            <select className="border border-stone-200 rounded-lg px-3 py-2 text-sm">
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente..." className="border border-stone-200 rounded-lg px-3 py-2 text-sm w-48" />
+            <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)} className="border border-stone-200 rounded-lg px-3 py-2 text-sm">
               <option>Todos los servicios</option>
               {services.map((s) => <option key={s.id}>{s.name}</option>)}
             </select>
@@ -1227,6 +1531,16 @@ function CitasPanel({ appts, clients, services, employees, schedule, profile, up
               <option>Completada</option>
               <option>Cancelada</option>
             </select>
+            <button
+              onClick={() => downloadCSV(
+                "citas.csv",
+                ["Hora", "Cliente", "Servicio", "Profesional", "Duración", "Precio", "Estado"],
+                visibleAppts.map((a) => [a.time, a.client, a.service, a.employee || "—", a.duration, a.price, STATUS_LABEL[a.status]])
+              )}
+              className="border border-stone-200 text-slate-600 text-sm font-semibold px-4 py-2 rounded-lg"
+            >
+              Exportar CSV
+            </button>
           </div>
 
           {selected.length > 0 && (
@@ -1262,7 +1576,13 @@ function CitasPanel({ appts, clients, services, employees, schedule, profile, up
               </thead>
               <tbody>
                 {visibleAppts.length === 0 && (
-                  <tr><td colSpan={9} className="py-6 px-3 text-center text-sm text-slate-400">No hay citas con este estado.</td></tr>
+                  <tr>
+                    <td colSpan={9} className="py-8 px-3 text-center text-sm text-slate-400">
+                      {appts.length === 0
+                        ? "Aún no tienes citas registradas. Comparte tu link de reservas para empezar a recibirlas."
+                        : "No hay citas que coincidan con estos filtros."}
+                    </td>
+                  </tr>
                 )}
                 {visibleAppts.map((a) => (
                   <tr key={a.id} className="border-b border-stone-100 last:border-0">
@@ -1367,9 +1687,13 @@ function NewClientModal({ onClose, onCreate }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
 
   const handleSubmit = () => {
-    if (!name.trim() || !phone.trim()) return;
+    if (!name.trim() || !phone.trim()) {
+      setError("Completa nombre y teléfono para continuar.");
+      return;
+    }
     onCreate({
       id: "cl" + Date.now(),
       name: name.trim(),
@@ -1398,10 +1722,11 @@ function NewClientModal({ onClose, onCreate }) {
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Teléfono</label>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" placeholder="809-555-0000" />
         </div>
-        <div className="mb-5">
+        <div className="mb-4">
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Correo (opcional)</label>
           <input value={email} onChange={(e) => setEmail(e.target.value)} className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" placeholder="correo@email.com" />
         </div>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
         <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">Crear cliente</button>
       </div>
     </div>
@@ -1410,7 +1735,19 @@ function NewClientModal({ onClose, onCreate }) {
 
 function ClientesPanel({ clients, onOpenClient, onCreateClient }) {
   const [showNew, setShowNew] = useState(false);
+  const [search, setSearch] = useState("");
   const total = CLIENT_BASE_COUNT + clients.length;
+  const query = search.trim().toLowerCase();
+  const filtered = query ? clients.filter((c) => c.name.toLowerCase().includes(query) || c.phone.includes(query)) : clients;
+
+  const exportCSV = () => {
+    downloadCSV(
+      "clientes.csv",
+      ["Nombre", "Teléfono", "Correo", "Registrado", "Citas", "Estado"],
+      clients.map((c) => [c.name, c.phone, c.email, c.since, c.count, c.status])
+    );
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center flex-wrap gap-3 mb-4">
@@ -1418,8 +1755,9 @@ function ClientesPanel({ clients, onOpenClient, onCreateClient }) {
           <h2 className="font-serif text-xl font-semibold mb-0.5">Clientes</h2>
           <div className="text-sm text-slate-500">{total} clientes registrados</div>
         </div>
-        <div className="flex gap-2.5">
-          <input placeholder="Buscar cliente..." className="border border-stone-200 rounded-lg px-3 py-2 text-sm w-48" />
+        <div className="flex gap-2.5 flex-wrap">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente..." className="border border-stone-200 rounded-lg px-3 py-2 text-sm w-48" />
+          <button onClick={exportCSV} className="border border-stone-200 text-slate-600 text-sm font-semibold px-4 py-2.5 rounded-lg">Exportar CSV</button>
           <button onClick={() => setShowNew(true)} className="bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg">+ Nuevo cliente</button>
         </div>
       </div>
@@ -1435,7 +1773,10 @@ function ClientesPanel({ clients, onOpenClient, onCreateClient }) {
             </tr>
           </thead>
           <tbody>
-            {clients.map((c) => (
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} className="py-6 px-3 text-center text-sm text-slate-400">No encontramos clientes que coincidan con "{search}".</td></tr>
+            )}
+            {filtered.map((c) => (
               <tr key={c.id} onClick={() => onOpenClient(c)} className="border-b border-stone-100 last:border-0 cursor-pointer hover:bg-stone-50">
                 <td className="py-3 px-3">
                   <div className="flex items-center gap-2.5">
@@ -1510,20 +1851,22 @@ function ClientDrawer({ client, onClose }) {
   );
 }
 
-function NewServiceModal({ onClose, onCreate }) {
-  const [name, setName] = useState("");
-  const [duration, setDuration] = useState(DURATION_OPTIONS[2]);
-  const [price, setPrice] = useState("");
-  const [desc, setDesc] = useState("");
+function ServiceFormModal({ initial, onClose, onSave }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [duration, setDuration] = useState(initial?.duration || DURATION_OPTIONS[2]);
+  const [price, setPrice] = useState(initial ? initial.priceLabel.replace(/[^\d]/g, "") : "");
+  const [desc, setDesc] = useState(initial?.desc || "");
+  const [error, setError] = useState("");
 
   const handleSubmit = () => {
-    if (!name.trim() || !price.trim()) return;
-    onCreate({
-      id: "s" + Date.now(),
+    if (!name.trim()) { setError("Escribe un nombre para el servicio."); return; }
+    if (!price.trim()) { setError("Escribe un precio."); return; }
+    onSave({
+      id: initial?.id || "s" + Date.now(),
       name: name.trim(),
       duration,
       priceLabel: `RD$${price.trim()}`,
-      active: true,
+      active: initial ? initial.active : true,
       desc: desc.trim(),
     });
   };
@@ -1532,7 +1875,7 @@ function NewServiceModal({ onClose, onCreate }) {
     <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ background: "rgba(15,23,42,0.35)" }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div className="flex justify-between items-start mb-4">
-          <h3 className="font-serif text-lg font-semibold">Nuevo servicio</h3>
+          <h3 className="font-serif text-lg font-semibold">{initial ? "Editar servicio" : "Nuevo servicio"}</h3>
           <X size={20} className="cursor-pointer text-slate-400 flex-shrink-0" onClick={onClose} />
         </div>
         <div className="mb-3.5">
@@ -1551,11 +1894,12 @@ function NewServiceModal({ onClose, onCreate }) {
             <input value={price} onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, ""))} placeholder="450" className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" />
           </div>
         </div>
-        <div className="mb-5">
+        <div className="mb-4">
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Descripción (opcional)</label>
           <textarea value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm resize-none h-16" placeholder="Breve descripción para el cliente" />
         </div>
-        <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">Crear servicio</button>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+        <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">{initial ? "Guardar cambios" : "Crear servicio"}</button>
       </div>
     </div>
   );
@@ -1564,9 +1908,13 @@ function NewServiceModal({ onClose, onCreate }) {
 function AddBlockModal({ onClose, onAdd }) {
   const [start, setStart] = useState("8:00 AM");
   const [end, setEnd] = useState("6:00 PM");
+  const [error, setError] = useState("");
 
   const handleSubmit = () => {
-    if (parseTimeToMinutes(start) >= parseTimeToMinutes(end)) return;
+    if (parseTimeToMinutes(start) >= parseTimeToMinutes(end)) {
+      setError('La hora "Hasta" debe ser después de la hora "Desde".');
+      return;
+    }
     onAdd(start, end);
   };
 
@@ -1577,7 +1925,7 @@ function AddBlockModal({ onClose, onAdd }) {
           <h3 className="font-serif text-lg font-semibold">Agregar bloque de horario</h3>
           <X size={20} className="cursor-pointer text-slate-400 flex-shrink-0" onClick={onClose} />
         </div>
-        <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Desde</label>
             <select value={start} onChange={(e) => setStart(e.target.value)} className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm">
@@ -1591,6 +1939,7 @@ function AddBlockModal({ onClose, onAdd }) {
             </select>
           </div>
         </div>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
         <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">Agregar bloque</button>
       </div>
     </div>
@@ -1600,9 +1949,13 @@ function AddBlockModal({ onClose, onAdd }) {
 function AddExceptionModal({ onClose, onAdd }) {
   const [name, setName] = useState("");
   const [detail, setDetail] = useState("");
+  const [error, setError] = useState("");
 
   const handleSubmit = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setError("Escribe un motivo para el bloqueo.");
+      return;
+    }
     onAdd({ n: name.trim(), d: detail.trim() || "Todo el día" });
   };
 
@@ -1617,33 +1970,36 @@ function AddExceptionModal({ onClose, onAdd }) {
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Motivo</label>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Vacaciones, feriado, mantenimiento" className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" />
         </div>
-        <div className="mb-5">
+        <div className="mb-4">
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Fecha u horario</label>
           <input value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="Ej: 1 – 15 de agosto" className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" />
         </div>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
         <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">Agregar bloqueo</button>
       </div>
     </div>
   );
 }
 
-function NewEmployeeModal({ services, onClose, onCreate }) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [phone, setPhone] = useState("");
-  const [serviceIds, setServiceIds] = useState([]);
+function EmployeeFormModal({ initial, services, onClose, onSave }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [role, setRole] = useState(initial?.role || "");
+  const [phone, setPhone] = useState(initial?.phone || "");
+  const [serviceIds, setServiceIds] = useState(initial?.serviceIds || []);
+  const [error, setError] = useState("");
 
   const toggleService = (id) => setServiceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const handleSubmit = () => {
-    if (!name.trim() || !role.trim()) return;
-    onCreate({
-      id: "e" + Date.now(),
+    if (!name.trim()) { setError("Escribe el nombre del empleado."); return; }
+    if (!role.trim()) { setError("Escribe su puesto."); return; }
+    onSave({
+      id: initial?.id || "e" + Date.now(),
       name: name.trim(),
       initials: initialsFromName(name.trim()),
       role: role.trim(),
       phone: phone.trim(),
-      active: true,
+      active: initial ? initial.active : true,
       serviceIds,
     });
   };
@@ -1652,7 +2008,7 @@ function NewEmployeeModal({ services, onClose, onCreate }) {
     <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ background: "rgba(15,23,42,0.35)" }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div className="flex justify-between items-start mb-4">
-          <h3 className="font-serif text-lg font-semibold">Nuevo empleado</h3>
+          <h3 className="font-serif text-lg font-semibold">{initial ? "Editar empleado" : "Nuevo empleado"}</h3>
           <X size={20} className="cursor-pointer text-slate-400 flex-shrink-0" onClick={onClose} />
         </div>
         <div className="grid grid-cols-2 gap-3 mb-3.5">
@@ -1669,7 +2025,7 @@ function NewEmployeeModal({ services, onClose, onCreate }) {
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Teléfono</label>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="809-555-0000" className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" />
         </div>
-        <div className="mb-5">
+        <div className="mb-4">
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Servicios que puede realizar</label>
           <div className="flex flex-wrap gap-2">
             {services.filter((s) => s.active).map((s) => (
@@ -1685,7 +2041,8 @@ function NewEmployeeModal({ services, onClose, onCreate }) {
             ))}
           </div>
         </div>
-        <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">Crear empleado</button>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+        <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">{initial ? "Guardar cambios" : "Crear empleado"}</button>
       </div>
     </div>
   );
@@ -1693,7 +2050,20 @@ function NewEmployeeModal({ services, onClose, onCreate }) {
 
 function EmpleadosPanel({ employees, setEmployees, services }) {
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const toggleActive = (id) => setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, active: !e.active } : e)));
+
+  const handleSave = (emp) => {
+    setEmployees((prev) => (prev.some((e) => e.id === emp.id) ? prev.map((e) => (e.id === emp.id ? emp : e)) : [...prev, emp]));
+    setShowNew(false);
+    setEditing(null);
+  };
+
+  const handleDelete = () => {
+    setEmployees((prev) => prev.filter((e) => e.id !== deleteTarget.id));
+    setDeleteTarget(null);
+  };
 
   return (
     <div>
@@ -1704,6 +2074,14 @@ function EmpleadosPanel({ employees, setEmployees, services }) {
         </div>
         <button onClick={() => setShowNew(true)} className="bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg">+ Agregar empleado</button>
       </div>
+
+      {employees.length === 0 && (
+        <div className="text-center py-10 px-4 border-2 border-dashed border-stone-200 rounded-xl mb-3">
+          <p className="text-sm font-semibold text-slate-600 mb-1">Aún no tienes empleados registrados</p>
+          <p className="text-xs text-slate-500">Agrega tu equipo para poder asignar profesionales a las citas.</p>
+        </div>
+      )}
+
       {employees.map((e) => (
         <div key={e.id} className={`flex items-center gap-3.5 bg-white border border-stone-200 rounded-xl px-4 py-3.5 mb-2.5 flex-wrap md:flex-nowrap ${!e.active ? "opacity-55" : ""}`}>
           <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center font-serif font-semibold text-sm flex-shrink-0">
@@ -1722,8 +2100,8 @@ function EmpleadosPanel({ employees, setEmployees, services }) {
             </div>
           </div>
           <Toggle on={e.active} onClick={() => toggleActive(e.id)} />
-          <Pencil size={15} className="text-slate-400 cursor-pointer flex-shrink-0" />
-          <Trash2 size={15} className="text-slate-400 cursor-pointer flex-shrink-0" />
+          <Pencil size={15} className="text-slate-400 cursor-pointer flex-shrink-0" onClick={() => setEditing(e)} />
+          <Trash2 size={15} className="text-slate-400 cursor-pointer flex-shrink-0" onClick={() => setDeleteTarget(e)} />
         </div>
       ))}
       <div
@@ -1732,11 +2110,21 @@ function EmpleadosPanel({ employees, setEmployees, services }) {
       >
         + Agregar empleado
       </div>
-      {showNew && (
-        <NewEmployeeModal
+      {(showNew || editing) && (
+        <EmployeeFormModal
+          initial={editing}
           services={services}
-          onClose={() => setShowNew(false)}
-          onCreate={(emp) => { setEmployees((prev) => [...prev, emp]); setShowNew(false); }}
+          onClose={() => { setShowNew(false); setEditing(null); }}
+          onSave={handleSave}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="¿Eliminar este empleado?"
+          message={`"${deleteTarget.name}" ya no podrá ser asignado a nuevas citas.`}
+          confirmLabel="Sí, eliminar"
+          onConfirm={handleDelete}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
     </div>
@@ -1745,7 +2133,21 @@ function EmpleadosPanel({ employees, setEmployees, services }) {
 
 function ServiciosPanel({ services, setServices }) {
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const toggleActive = (id) => setServices((prev) => prev.map((s) => (s.id === id ? { ...s, active: !s.active } : s)));
+
+  const handleSave = (svc) => {
+    setServices((prev) => (prev.some((s) => s.id === svc.id) ? prev.map((s) => (s.id === svc.id ? svc : s)) : [...prev, svc]));
+    setShowNew(false);
+    setEditing(null);
+  };
+
+  const handleDelete = () => {
+    setServices((prev) => prev.filter((s) => s.id !== deleteTarget.id));
+    setDeleteTarget(null);
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center flex-wrap gap-3 mb-5">
@@ -1755,6 +2157,14 @@ function ServiciosPanel({ services, setServices }) {
         </div>
         <button onClick={() => setShowNew(true)} className="bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg">+ Nuevo servicio</button>
       </div>
+
+      {services.length === 0 && (
+        <div className="text-center py-10 px-4 border-2 border-dashed border-stone-200 rounded-xl mb-3">
+          <p className="text-sm font-semibold text-slate-600 mb-1">Aún no tienes servicios</p>
+          <p className="text-xs text-slate-500">Agrega el primero para que tus clientes puedan empezar a reservar.</p>
+        </div>
+      )}
+
       {services.map((s) => (
         <div key={s.id} className={`flex items-center gap-3.5 bg-white border border-stone-200 rounded-xl px-4 py-3.5 mb-2.5 flex-wrap md:flex-nowrap ${!s.active ? "opacity-55" : ""}`}>
           <GripVertical size={16} className="text-stone-300 flex-shrink-0" />
@@ -1771,8 +2181,8 @@ function ServiciosPanel({ services, setServices }) {
             <div className="text-xs text-slate-500">Precio</div>
           </div>
           <Toggle on={s.active} onClick={() => toggleActive(s.id)} />
-          <Pencil size={15} className="text-slate-400 cursor-pointer flex-shrink-0" />
-          <Trash2 size={15} className="text-slate-400 cursor-pointer flex-shrink-0" />
+          <Pencil size={15} className="text-slate-400 cursor-pointer flex-shrink-0" onClick={() => setEditing(s)} />
+          <Trash2 size={15} className="text-slate-400 cursor-pointer flex-shrink-0" onClick={() => setDeleteTarget(s)} />
         </div>
       ))}
       <div
@@ -1781,10 +2191,20 @@ function ServiciosPanel({ services, setServices }) {
       >
         + Agregar servicio
       </div>
-      {showNew && (
-        <NewServiceModal
-          onClose={() => setShowNew(false)}
-          onCreate={(svc) => { setServices((prev) => [...prev, svc]); setShowNew(false); }}
+      {(showNew || editing) && (
+        <ServiceFormModal
+          initial={editing}
+          onClose={() => { setShowNew(false); setEditing(null); }}
+          onSave={handleSave}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="¿Eliminar este servicio?"
+          message={`"${deleteTarget.name}" dejará de estar disponible para nuevas reservas.`}
+          confirmLabel="Sí, eliminar"
+          onConfirm={handleDelete}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
     </div>
@@ -2057,8 +2477,53 @@ const PLAN_STYLES = {
   BUSINESS: "bg-amber-50 text-amber-800",
 };
 
+function NewBusinessModal({ onClose, onCreate }) {
+  const [name, setName] = useState("");
+  const [city, setCity] = useState("");
+  const [plan, setPlan] = useState("BASIC");
+  const [error, setError] = useState("");
+
+  const handleSubmit = () => {
+    if (!name.trim() || !city.trim()) {
+      setError("Completa el nombre del negocio y la ciudad.");
+      return;
+    }
+    onCreate({ id: "t" + Date.now(), name: name.trim(), plan, city: city.trim(), clients: 0, status: "Activo" });
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ background: "rgba(15,23,42,0.35)" }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex justify-between items-start mb-4">
+          <h3 className="font-serif text-lg font-semibold">Registrar negocio</h3>
+          <X size={20} className="cursor-pointer text-slate-400 flex-shrink-0" onClick={onClose} />
+        </div>
+        <div className="mb-3.5">
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Nombre del negocio</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Spa Aurora" className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" />
+        </div>
+        <div className="mb-3.5">
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Ciudad</label>
+          <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Ej: Santo Domingo" className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm" />
+        </div>
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Plan</label>
+          <select value={plan} onChange={(e) => setPlan(e.target.value)} className="w-full border border-stone-200 rounded-lg px-3 py-2.5 text-sm">
+            <option value="BASIC">BASIC</option>
+            <option value="PRO">PRO</option>
+            <option value="BUSINESS">BUSINESS</option>
+          </select>
+        </div>
+        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+        <button onClick={handleSubmit} className="w-full bg-emerald-700 text-white font-semibold py-3 rounded-xl text-sm">Registrar negocio</button>
+      </div>
+    </div>
+  );
+}
+
 function SuperAdminPanel() {
   const [businesses, setBusinesses] = useState(PLATFORM_BUSINESSES_SEED);
+  const [showNew, setShowNew] = useState(false);
 
   const toggleStatus = (id) =>
     setBusinesses((prev) => prev.map((b) => (b.id === id ? { ...b, status: b.status === "Activo" ? "Inactivo" : "Activo" } : b)));
@@ -2080,7 +2545,7 @@ function SuperAdminPanel() {
             <h2 className="font-serif text-xl font-semibold mb-0.5">Plataforma</h2>
             <div className="text-sm text-slate-500">Todos los negocios registrados</div>
           </div>
-          <button className="bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg">+ Registrar negocio</button>
+          <button onClick={() => setShowNew(true)} className="bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg">+ Registrar negocio</button>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
@@ -2127,6 +2592,12 @@ function SuperAdminPanel() {
           </table>
         </div>
       </div>
+      {showNew && (
+        <NewBusinessModal
+          onClose={() => setShowNew(false)}
+          onCreate={(b) => { setBusinesses((prev) => [...prev, b]); setShowNew(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -2145,11 +2616,15 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
         .font-serif { font-family: 'Fraunces', serif; }
+        @keyframes popIn { 0% { transform: scale(0.5); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
+        .animate-pop { animation: popIn 420ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes fadeSlide { 0% { opacity: 0; transform: translateY(4px); } 100% { opacity: 1; transform: translateY(0); } }
+        .animate-fade { animation: fadeSlide 400ms ease; }
       `}</style>
       <TopSwitcher view={view} setView={setView} />
       <div className="max-w-6xl mx-auto pb-16">
         {view === "client" && (
-          <ClientFlow services={services} appts={appts} setAppts={setAppts} setClients={setClients} schedule={schedule} profile={profile} employees={employees} />
+          <ClientFlow services={services} appts={appts} setAppts={setAppts} clients={clients} setClients={setClients} schedule={schedule} profile={profile} employees={employees} />
         )}
         {view === "business" && (
           <BusinessPanel
